@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#111827">
+  <meta name="description" content="Coupang 台灣商品折扣排行，依折扣率與價格排序。">
+  <title>Coupang 台灣折扣雷達</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <header class="site-header">
+    <div class="brand"><span class="brand-mark">C</span><div><strong>折扣雷達</strong><small>COUPANG TAIWAN DEAL FINDER</small></div></div>
+    <a class="source-link" href="https://www.tw.coupang.com/" target="_blank" rel="noopener">前往 Coupang ↗</a>
+  </header>
+  <main class="container">
+    <section class="hero">
+      <p class="eyebrow">TAIWAN · DAILY DEAL TRACKER</p>
+      <h1>把真正有感的折扣<br><span>一次找出來。</span></h1>
+      <p class="intro">彙整公開商品頁可辨識的價格，依折扣幅度排行。資料每日自動更新，也可手動重新載入。</p>
+      <div class="stats">
+        <div><strong id="total-count">—</strong><span>筆商品</span></div>
+        <div><strong id="best-discount">—</strong><span>最高折扣</span></div>
+        <div><strong id="updated-at">讀取中</strong><span>最後更新</span></div>
+      </div>
+    </section>
+
+    <section class="toolbar" aria-label="商品篩選與排序">
+      <label class="search-box"><span>⌕</span><input id="search-input" type="search" placeholder="搜尋商品名稱…" autocomplete="off"></label>
+      <select id="sort-select" aria-label="排序方式">
+        <option value="discount">折扣率：高至低</option>
+        <option value="saving">折扣金額：高至低</option>
+        <option value="price-asc">價格：低至高</option>
+        <option value="price-desc">價格：高至低</option>
+        <option value="newest">最近更新</option>
+      </select>
+      <button id="refresh-button" class="refresh-button" type="button"><span>↻</span> 重新載入</button>
+    </section>
+
+    <div class="result-heading"><h2>優惠排行榜</h2><span id="result-count">正在載入…</span></div>
+    <div id="status" class="status" role="status">正在讀取最新商品資料…</div>
+    <section id="product-grid" class="product-grid" aria-live="polite"></section>
+    <section id="empty-state" class="empty-state" hidden><strong>目前沒有符合條件的商品</strong><p>試試其他關鍵字，或重新載入資料。</p></section>
+    <footer><p>折扣率以可辨識的原價與目前價格計算；未取得原價的商品不會列入折扣排行。實際售價、庫存與活動資格以 Coupang 商品頁為準。</p><p>資料來源：<a href="https://www.tw.coupang.com/" target="_blank" rel="noopener">Coupang 台灣</a> · 本工具為非官方整理頁面。</p></footer>
+  </main>
+  <script src="js/app.js" defer></script>
+</body>
+</html>
