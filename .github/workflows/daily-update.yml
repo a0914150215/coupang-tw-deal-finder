@@ -3,6 +3,12 @@ on:
   schedule:
     - cron: "0 0 * * *" # 08:00 Taiwan time (UTC+8)
   workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - "scraper/**"
+      - ".github/workflows/daily-update.yml"
 
 permissions:
   contents: write
