@@ -1,10 +1,17 @@
 #!/usr/bin/env python3
-"""Conservative public-page collector for Coupang Taiwan.
-Only requests ordinary public pages; does not log in, solve challenges, or bypass access controls.
-If the site blocks automated access, stop and use an authorized data feed.
+"""Coupang 台灣折扣商品擷取器（每日由 GitHub Actions 執行）。
+
+流程：seeds.txt 的列表頁 -> 收集商品連結 -> 逐一讀取商品頁 JSON-LD -> 輸出 data/products.json
+原則：只讀公開頁面；遇到 403/429/503 立即停止，不嘗試繞過。
+結束碼：0 成功；2 被網站阻擋或沒有任何結果（舊資料保留，讓 Actions 失敗並寄通知）。
 """
+from __future__ import annotations
+
 import json
+import os
+import random
 import re
+import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -13,125 +20,167 @@ from urllib.parse import urljoin, urlparse
 import requests
 from bs4 import BeautifulSoup
 
-BASE = "https://www.tw.coupang.com/"
-OUT = Path("data/products.json")
-HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; CoupangTWDealFinder/1.0; +https://github.com/a0914150215/coupang-tw-deal-finder)"}
-MAX_PAGES = 12
-SESSION = requests.Session()
-SESSION.headers.update(HEADERS)
+ROOT = Path(__file__).resolve().parent.parent
+SEEDS = ROOT / "scraper" / "seeds.txt"
+OUT = ROOT / "data" / "products.json"
+
+MAX_PRODUCTS = int(os.getenv("MAX_PRODUCTS", "150"))
+MIN_DISCOUNT = float(os.getenv("MIN_DISCOUNT_PCT", "5"))
+DELAY = (1.5, 3.5)
+BLOCK_CODES = {403, 429, 503}
+PRODUCT_LINK = re.compile(r"/vp/products/(\d+)")
+
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (compatible; coupang-tw-deal-finder/2.0; +https://github.com/a0914150215/coupang-tw-deal-finder)",
+    "Accept-Language": "zh-TW,zh;q=0.9",
+}
 
 
-def money(value):
-    if value is None:
-        return None
-    if isinstance(value, (int, float)):
-        return float(value)
-    text = re.sub(r"[^0-9.]", "", str(value).replace(",", ""))
+class Blocked(Exception):
+    pass
+
+
+def fetch(session: requests.Session, url: str) -> str:
+    r = session.get(url, headers=HEADERS, timeout=20)
+    if r.status_code in BLOCK_CODES:
+        raise Blocked(f"{r.status_code} {url}")
+    r.raise_for_status()
+    time.sleep(random.uniform(*DELAY))
+    return r.text
+
+
+def read_seeds() -> list[str]:
+    if not SEEDS.exists():
+        return []
+    return [l.strip() for l in SEEDS.read_text(encoding="utf-8").splitlines()
+            if l.strip() and not l.lstrip().startswith("#")]
+
+
+def product_links(html: str, base: str) -> list[str]:
+    soup = BeautifulSoup(html, "html.parser")
+    seen, out = set(), []
+    for a in soup.find_all("a", href=True):
+        if PRODUCT_LINK.search(a["href"]):
+            u = urljoin(base, a["href"]).split("#")[0]
+            key = urlparse(u).path
+            if key not in seen:
+                seen.add(key)
+                out.append(u)
+    return out
+
+
+def _num(v):
     try:
-        return float(text) if text else None
-    except ValueError:
+        return float(str(v).replace(",", "").strip())
+    except (TypeError, ValueError):
         return None
 
 
-def walk_json(value):
-    if isinstance(value, dict):
-        yield value
-        for child in value.values():
-            yield from walk_json(child)
-    elif isinstance(value, list):
-        for child in value:
-            yield from walk_json(child)
+def _walk(node):
+    if isinstance(node, list):
+        for i in node:
+            yield from _walk(i)
+    elif isinstance(node, dict):
+        yield node
+        if isinstance(node.get("@graph"), list):
+            yield from _walk(node["@graph"])
 
 
-def product_from_object(obj, page_url):
-    if str(obj.get("@type", "")).lower() != "product":
-        return None
-    name = obj.get("name")
-    offers = obj.get("offers", {})
-    if isinstance(offers, list):
-        offers = offers[0] if offers else {}
-    if not isinstance(offers, dict):
-        offers = {}
-    price = money(offers.get("price") or offers.get("lowPrice"))
-    original = money(obj.get("highPrice") or offers.get("highPrice"))
-    if original is None:
-        original = money(obj.get("priceSpecification", {}).get("price")) if isinstance(obj.get("priceSpecification"), dict) else None
-    image = obj.get("image")
-    if isinstance(image, list):
-        image = image[0] if image else None
-    url = obj.get("url") or page_url
-    if not name or not price or price <= 0:
-        return None
-    return {"name": str(name).strip(), "price": price, "original_price": original if original and original > price else None,
-            "image": urljoin(page_url, image) if image else None, "url": urljoin(page_url, str(url))}
-
-
-def fetch(url):
-    response = SESSION.get(url, timeout=25)
-    if response.status_code in (403, 429, 503):
-        raise RuntimeError(f"網站回應 HTTP {response.status_code}，停止擷取；不嘗試繞過限制。")
-    response.raise_for_status()
-    return response.text
-
-
-def main():
-    OUT.parent.mkdir(parents=True, exist_ok=True)
-    old = {}
-    if OUT.exists():
+def parse_product(html: str, url: str) -> dict | None:
+    soup = BeautifulSoup(html, "html.parser")
+    for tag in soup.find_all("script", type="application/ld+json"):
         try:
-            old = {p["url"]: p for p in json.loads(OUT.read_text("utf-8")).get("products", [])}
-        except (ValueError, OSError):
-            pass
+            data = json.loads(tag.string or "")
+        except (json.JSONDecodeError, TypeError):
+            continue
+        for node in _walk(data):
+            t = node.get("@type")
+            if t != "Product" and not (isinstance(t, list) and "Product" in t):
+                continue
+            offers = node.get("offers") or {}
+            if isinstance(offers, list):
+                offers = offers[0] if offers else {}
+            price = _num(offers.get("price") or offers.get("lowPrice"))
+            original = None
+            specs = offers.get("priceSpecification") or []
+            if isinstance(specs, dict):
+                specs = [specs]
+            for s in specs:
+                kind = str(s.get("priceType", "")).lower()
+                if any(k in kind for k in ("list", "strike", "msrp", "original")):
+                    original = _num(s.get("price"))
+            if original is None:
+                original = _num(offers.get("highPrice"))
+            # 沒有可驗證的原價就不算折扣商品，不猜測
+            if not price or not original or original <= price:
+                return None
+            pct = round((original - price) / original * 100, 1)
+            if pct < MIN_DISCOUNT or pct > 90:
+                return None
+            img = node.get("image")
+            if isinstance(img, list):
+                img = img[0] if img else None
+            if not (isinstance(img, str) and img.startswith("https://")):
+                img = None
+            m = PRODUCT_LINK.search(url)
+            return {
+                "id": m.group(1) if m else url,
+                "name": str(node.get("name", "")).strip()[:200],
+                "url": url,
+                "image": img,
+                "price": int(price),
+                "original_price": int(original),
+                "discount_pct": pct,
+                "discount_amount": int(original - price),
+                "currency": offers.get("priceCurrency", "TWD"),
+            }
+    return None
 
-    queue = [BASE]
-    visited, found = set(), {}
-    while queue and len(visited) < MAX_PAGES:
-        url = queue.pop(0)
-        if url in visited:
-            continue
-        visited.add(url)
-        try:
-            html = fetch(url)
-        except Exception as exc:
-            print(f"Skip {url}: {exc}")
-            if "HTTP 403" in str(exc) or "HTTP 429" in str(exc) or "HTTP 503" in str(exc):
-                break
-            continue
-        soup = BeautifulSoup(html, "html.parser")
-        for script in soup.select('script[type="application/ld+json"]'):
+
+def main() -> int:
+    seeds = read_seeds()
+    if not seeds:
+        print("scraper/seeds.txt 沒有任何網址，請先填入。", file=sys.stderr)
+        return 2
+
+    session = requests.Session()
+    links: list[str] = []
+    products: list[dict] = []
+    try:
+        for s in seeds:
+            for u in product_links(fetch(session, s), s):
+                if u not in links:
+                    links.append(u)
+        print(f"找到 {len(links)} 個商品連結")
+        for u in links[:MAX_PRODUCTS]:
             try:
-                payload = json.loads(script.string or script.get_text())
-            except (ValueError, TypeError):
+                p = parse_product(fetch(session, u), u)
+            except requests.RequestException as e:
+                print(f"略過 {u}: {e}", file=sys.stderr)
                 continue
-            for obj in walk_json(payload):
-                item = product_from_object(obj, url)
-                if item:
-                    found[item["url"]] = item
+            if p:
+                products.append(p)
+    except Blocked as e:
+        print(f"被網站阻擋，停止（不嘗試繞過）：{e}", file=sys.stderr)
+        return 2
+    except requests.RequestException as e:
+        print(f"列表頁讀取失敗：{e}", file=sys.stderr)
+        return 2
 
-        # Follow only same-site links whose paths look like product or category pages.
-        for a in soup.select("a[href]"):
-            absolute = urljoin(url, a.get("href", "").split("?")[0])
-            parsed = urlparse(absolute)
-            if parsed.scheme not in ("http", "https") or parsed.netloc not in ("tw.coupang.com", "www.tw.coupang.com"):
-                continue
-            if absolute not in visited and ("/vp/" in parsed.path or "/np/" in parsed.path or "/categories/" in parsed.path):
-                if absolute not in queue:
-                    queue.append(absolute)
-        time.sleep(1.5)
+    if not products:
+        print("沒有取得任何可驗證折扣的商品，保留舊資料。", file=sys.stderr)
+        return 2
 
-    now = datetime.now(timezone.utc).isoformat()
-    output = []
-    for url, item in found.items():
-        previous = old.get(url, {})
-        item["previous_price"] = previous.get("price")
-        item["seen_at"] = now
-        # Never infer a discount from a previous crawl price; only publish a discount when page markup provides a list price.
-        output.append(item)
-    output.sort(key=lambda p: ((1-p["price"]/p["original_price"]) if p.get("original_price") else 0), reverse=True)
-    result = {"source": BASE, "updated_at": now, "count": len(output), "products": output}
-    OUT.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(f"Saved {len(output)} products from {len(visited)} public pages.")
+    products.sort(key=lambda p: p["discount_pct"], reverse=True)
+    OUT.parent.mkdir(exist_ok=True)
+    OUT.write_text(json.dumps({
+        "updated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "count": len(products),
+        "products": products,
+    }, ensure_ascii=False, indent=1), encoding="utf-8")
+    print(f"完成：{len(products)} 件折扣商品")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

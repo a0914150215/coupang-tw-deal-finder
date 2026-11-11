@@ -1,48 +1,112 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="zh-Hant">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#111827">
-  <meta name="description" content="Coupang 台灣商品折扣排行，依折扣率與價格排序。">
-  <title>Coupang 台灣折扣雷達</title>
-  <link rel="stylesheet" href="css/style.css">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Coupang 台灣折扣排行</title>
+<style>
+:root{--bg:#f3f6f5;--card:#fff;--ink:#16231f;--sub:#5b6b66;--line:#d5dedb;--accent:#0b7a5a;--tag:#c2410c}
+@media (prefers-color-scheme:dark){:root{--bg:#0f1715;--card:#17211e;--ink:#e6efec;--sub:#9db0aa;--line:#2a3a35;--accent:#4fd1a5;--tag:#fb923c}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.55 "Noto Sans TC","PingFang TC","Microsoft JhengHei",sans-serif}
+header{padding:28px 20px 12px;max-width:1100px;margin:auto}
+h1{margin:0 0 4px;font-size:1.6rem}
+#meta{color:var(--sub);font-size:.9rem;margin:0}
+.bar{max-width:1100px;margin:auto;padding:8px 20px 16px;display:flex;gap:10px;flex-wrap:wrap}
+input,select,button{font:inherit;padding:9px 12px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--ink)}
+input{flex:1 1 220px}
+button{cursor:pointer;color:var(--accent);border-color:var(--accent)}
+:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
+main{max-width:1100px;margin:auto;padding:0 20px 48px;display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:14px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;overflow:hidden;display:flex;flex-direction:column;text-decoration:none;color:inherit}
+.card:hover{border-color:var(--accent)}
+.card img{width:100%;aspect-ratio:1;object-fit:contain;background:#fff}
+.body{padding:10px 12px 14px;display:flex;flex-direction:column;gap:6px}
+.name{font-size:.92rem;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.price{font-size:1.25rem;font-weight:700}
+.old{color:var(--sub);text-decoration:line-through;font-size:.85rem;margin-left:6px;font-weight:400}
+.off{color:var(--tag);font-weight:700;font-size:.9rem}
+.empty{grid-column:1/-1;color:var(--sub);padding:40px 0;text-align:center}
+</style>
 </head>
 <body>
-  <header class="site-header">
-    <div class="brand"><span class="brand-mark">C</span><div><strong>折扣雷達</strong><small>COUPANG TAIWAN DEAL FINDER</small></div></div>
-    <a class="source-link" href="https://www.tw.coupang.com/" target="_blank" rel="noopener">前往 Coupang ↗</a>
-  </header>
-  <main class="container">
-    <section class="hero">
-      <p class="eyebrow">TAIWAN · DAILY DEAL TRACKER</p>
-      <h1>把真正有感的折扣<br><span>一次找出來。</span></h1>
-      <p class="intro">彙整公開商品頁可辨識的價格，依折扣幅度排行。資料每日自動更新，也可手動重新載入。</p>
-      <div class="stats">
-        <div><strong id="total-count">—</strong><span>筆商品</span></div>
-        <div><strong id="best-discount">—</strong><span>最高折扣</span></div>
-        <div><strong id="updated-at">讀取中</strong><span>最後更新</span></div>
-      </div>
-    </section>
+<header>
+  <h1>Coupang 台灣折扣排行</h1>
+  <p id="meta">載入中…</p>
+</header>
+<div class="bar">
+  <input id="q" type="search" placeholder="搜尋商品名稱" aria-label="搜尋商品名稱">
+  <select id="sort" aria-label="排序方式">
+    <option value="discount_pct">折扣率（高→低）</option>
+    <option value="discount_amount">折扣金額（高→低）</option>
+    <option value="price_asc">售價（低→高）</option>
+    <option value="price_desc">售價（高→低）</option>
+  </select>
+  <button id="reload" type="button">重新載入資料</button>
+</div>
+<main id="list"></main>
+<script>
+const $ = id => document.getElementById(id);
+let items = [];
+const fmt = n => "NT$" + Number(n).toLocaleString("zh-TW");
 
-    <section class="toolbar" aria-label="商品篩選與排序">
-      <label class="search-box"><span>⌕</span><input id="search-input" type="search" placeholder="搜尋商品名稱…" autocomplete="off"></label>
-      <select id="sort-select" aria-label="排序方式">
-        <option value="discount">折扣率：高至低</option>
-        <option value="saving">折扣金額：高至低</option>
-        <option value="price-asc">價格：低至高</option>
-        <option value="price-desc">價格：高至低</option>
-        <option value="newest">最近更新</option>
-      </select>
-      <button id="refresh-button" class="refresh-button" type="button"><span>↻</span> 重新載入</button>
-    </section>
+async function load(){
+  $("meta").textContent = "載入中…";
+  try{
+    const r = await fetch("data/products.json?ts=" + Date.now(), {cache:"no-store"});
+    if(!r.ok) throw new Error(r.status);
+    const d = await r.json();
+    items = Array.isArray(d.products) ? d.products : [];
+    const t = d.updated_at ? new Date(d.updated_at).toLocaleString("zh-TW",{hour12:false}) : "尚未更新";
+    $("meta").textContent = `共 ${items.length} 件折扣商品｜資料更新：${t}`;
+  }catch(e){
+    items = [];
+    $("meta").textContent = "資料讀取失敗，請稍後再試。";
+  }
+  render();
+}
 
-    <div class="result-heading"><h2>優惠排行榜</h2><span id="result-count">正在載入…</span></div>
-    <div id="status" class="status" role="status">正在讀取最新商品資料…</div>
-    <section id="product-grid" class="product-grid" aria-live="polite"></section>
-    <section id="empty-state" class="empty-state" hidden><strong>目前沒有符合條件的商品</strong><p>試試其他關鍵字，或重新載入資料。</p></section>
-    <footer><p>折扣率以可辨識的原價與目前價格計算；未取得原價的商品不會列入折扣排行。實際售價、庫存與活動資格以 Coupang 商品頁為準。</p><p>資料來源：<a href="https://www.tw.coupang.com/" target="_blank" rel="noopener">Coupang 台灣</a> · 本工具為非官方整理頁面。</p></footer>
-  </main>
-  <script src="js/app.js" defer></script>
+function render(){
+  const kw = $("q").value.trim().toLowerCase();
+  const s = $("sort").value;
+  let rows = items.filter(p => !kw || (p.name||"").toLowerCase().includes(kw));
+  rows.sort((a,b) =>
+    s==="price_asc" ? a.price-b.price :
+    s==="price_desc" ? b.price-a.price :
+    b[s]-a[s]);
+  const box = $("list");
+  box.replaceChildren();
+  if(!rows.length){
+    const d = document.createElement("div");
+    d.className = "empty";
+    d.textContent = items.length ? "沒有符合的商品，換個關鍵字試試。" : "目前沒有資料，請等待下一次排程更新。";
+    box.append(d);
+    return;
+  }
+  for(const p of rows){
+    const a = document.createElement("a");
+    a.className = "card";
+    a.href = /^https:\/\//.test(p.url) ? p.url : "#";
+    a.target = "_blank"; a.rel = "noopener noreferrer";
+    if(p.image){
+      const im = document.createElement("img");
+      im.src = p.image; im.alt = ""; im.loading = "lazy"; im.referrerPolicy = "no-referrer";
+      a.append(im);
+    }
+    const b = document.createElement("div"); b.className = "body";
+    const n = document.createElement("div"); n.className = "name"; n.textContent = p.name;
+    const pr = document.createElement("div"); pr.className = "price"; pr.textContent = fmt(p.price);
+    const o = document.createElement("span"); o.className = "old"; o.textContent = fmt(p.original_price);
+    pr.append(o);
+    const off = document.createElement("div"); off.className = "off";
+    off.textContent = `省 ${fmt(p.discount_amount)}（-${p.discount_pct}%）`;
+    b.append(n, pr, off); a.append(b); box.append(a);
+  }
+}
+$("q").addEventListener("input", render);
+$("sort").addEventListener("change", render);
+$("reload").addEventListener("click", load);
+load();
+</script>
 </body>
 </html>
