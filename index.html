@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Coupang 台灣折扣排行</title>
+<title>Coupang 台灣降價排行</title>
 <style>
 :root{--bg:#f3f6f5;--card:#fff;--ink:#16231f;--sub:#5b6b66;--line:#d5dedb;--accent:#0b7a5a;--tag:#c2410c}
 @media (prefers-color-scheme:dark){:root{--bg:#0f1715;--card:#17211e;--ink:#e6efec;--sub:#9db0aa;--line:#2a3a35;--accent:#4fd1a5;--tag:#fb923c}}
@@ -31,7 +31,7 @@ main{max-width:1100px;margin:auto;padding:0 20px 48px;display:grid;grid-template
 </head>
 <body>
 <header>
-  <h1>Coupang 台灣折扣排行</h1>
+  <h1>Coupang 台灣降價排行</h1>
   <p id="meta">載入中…</p>
 </header>
 <div class="bar">
@@ -99,7 +99,7 @@ function render(){
     const o = document.createElement("span"); o.className = "old"; o.textContent = fmt(p.original_price);
     pr.append(o);
     const off = document.createElement("div"); off.className = "off";
-    off.textContent = `省 ${fmt(p.discount_amount)}（-${p.discount_pct}%）`;
+    off.textContent = `較${p.basis || "原價"}省 ${fmt(p.discount_amount)}（-${p.discount_pct}%）` + (p.is_90d_low ? "｜近90日最低" : "");
     b.append(n, pr, off); a.append(b); box.append(a);
   }
 }
